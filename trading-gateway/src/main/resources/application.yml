@@ -1,0 +1,132 @@
+server:
+  port: ${TRADING_GATEWAY_PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: trading-gateway
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  lifecycle:
+    # Long enough for in-flight requests to finish before the router drains its queues.
+    timeout-per-shutdown-phase: 20s
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading}
+    username: ${DB_USERNAME:trading}
+    password: ${DB_PASSWORD:change-me}
+    hikari:
+      # The portfolio consumer holds one connection per in-flight transaction; a pool this small
+      # is deliberate so a database problem shows up as consumer lag rather than as an exhausted
+      # pool starving the rest of the process.
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 5000
+  flyway:
+    # Startup fails rather than serving traffic against a schema nobody has verified.
+    baseline-on-migrate: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # Every trading.* timer already publishes its own fixed percentile set (see
+        # GatewayMetrics, ProcessingMetrics, BufferedKafkaEventPublisher); this is what gets
+        # gateway HTTP latency — Spring's own auto-instrumented http.server.requests — the same
+        # p50/p95/p99/p99.9 treatment without hand-instrumenting it.
+        http.server.requests: true
+    tags:
+      # One label every dashboard/alert can group or filter on, so a query never has to assume
+      # this is the only job Prometheus scrapes.
+      application: ${spring.application.name}
+
+trading:
+  # apiKey:accountId pairs. Deliberately has no default: a gateway with no configured clients
+  # should fail to start rather than run with an accidental identity.
+  api-keys: ${GATEWAY_API_KEYS:}
+  # SYMBOL:referencePriceTicks pairs. A reference price of 0 means the instrument cannot take
+  # market orders until it has traded once.
+  instruments: ${GATEWAY_INSTRUMENTS:AAPL:19000,MSFT:42000,NVDA:12000,TSLA:24000}
+
+  matching:
+    worker-count: ${MATCHING_WORKERS:4}
+    queue-capacity: ${MATCHING_QUEUE_CAPACITY:8192}
+    command-timeout: ${MATCHING_COMMAND_TIMEOUT:2s}
+    # On by default: a matching worker's book is durable across a restart. See ADR-015. Off is
+    # only for tests that predate Stage 7 and don't want the journal directory as a side effect.
+    journal-enabled: ${MATCHING_JOURNAL_ENABLED:true}
+    journal-directory: ${MATCHING_JOURNAL_DIR:./data/matching-journal}
+    # EVERY_RECORD (fsync per command, the durability-first default) or BUFFERED.
+    journal-flush-policy: ${MATCHING_JOURNAL_FLUSH_POLICY:EVERY_RECORD}
+
+  risk:
+    max-order-quantity: ${RISK_MAX_ORDER_QUANTITY:10000}
+    max-order-notional: ${RISK_MAX_ORDER_NOTIONAL:100000000}
+    max-open-orders: ${RISK_MAX_OPEN_ORDERS:500}
+    max-position-quantity: ${RISK_MAX_POSITION_QUANTITY:100000}
+
+  rate-limit:
+    permits-per-second: ${RATE_LIMIT_PERMITS_PER_SECOND:200}
+    burst: ${RATE_LIMIT_BURST:400}
+
+  pipeline:
+    # When false the gateway trades normally but publishes nothing and starts no consumers.
+    enabled: ${PIPELINE_ENABLED:true}
+    # Events buffered between the matching workers and the Kafka producer. Overflow drops events
+    # and is reported by the trading.events.dropped counter; see BufferedKafkaEventPublisher.
+    publish-queue-capacity: ${PIPELINE_PUBLISH_QUEUE_CAPACITY:100000}
+    # Partition count bounds how far consumption can be parallelised, and cannot be lowered later.
+    topic-partitions: ${PIPELINE_TOPIC_PARTITIONS:12}
+    topic-replicas: ${PIPELINE_TOPIC_REPLICAS:1}
+    audit-log-max-entries: ${PIPELINE_AUDIT_LOG_MAX_ENTRIES:100000}
+    consumer-idle-interval: ${PIPELINE_CONSUMER_IDLE_INTERVAL:2s}
+    retry:
+      # Total attempts including the first. Finite on purpose: see ADR-009.
+      max-attempts: ${PIPELINE_RETRY_MAX_ATTEMPTS:4}
+      initial-interval: ${PIPELINE_RETRY_INITIAL_INTERVAL:200ms}
+      multiplier: ${PIPELINE_RETRY_MULTIPLIER:2.0}
+      max-interval: ${PIPELINE_RETRY_MAX_INTERVAL:5s}
+
+  marketdata:
+    # When false, no simulator/hub/WebSocket endpoint is wired at all - the gateway runs exactly
+    # as it did before Stage 6.
+    enabled: ${MARKETDATA_ENABLED:true}
+    symbols: ${MARKETDATA_SYMBOLS:AAPL,MSFT,NVDA,TSLA}
+    # Aggregate rate across every symbol above, not per symbol.
+    events-per-second: ${MARKETDATA_RATE:200}
+    seed: ${MARKETDATA_SEED:1337}
+    # Per-WebSocket-subscriber bounded queue; see ADR-013.
+    subscriber-queue-capacity: ${MARKETDATA_SUBSCRIBER_QUEUE_CAPACITY:256}
+    max-consecutive-drops: ${MARKETDATA_MAX_CONSECUTIVE_DROPS:50}
+    mark-price-flush-interval: ${MARKETDATA_MARK_FLUSH_INTERVAL:1s}
+    # json or binary; see ADR-014.
+    codec: ${MARKETDATA_CODEC:json}
+
+  tcp:
+    # When false, no TCP listener is started at all - the gateway runs exactly as it did before
+    # Stage 10. See ADR-016 and docs/tcp-protocol.md.
+    enabled: ${TCP_ENABLED:true}
+    port: ${TCP_PORT:9090}
+    max-connections: ${TCP_MAX_CONNECTIONS:512}
+    dispatch-pool-size: ${TCP_DISPATCH_POOL_SIZE:8}
+    dispatch-queue-capacity: ${TCP_DISPATCH_QUEUE_CAPACITY:2048}
+    outbound-queue-capacity: ${TCP_OUTBOUND_QUEUE_CAPACITY:256}
+    max-consecutive-drops: ${TCP_MAX_CONSECUTIVE_DROPS:50}
+    auth-timeout: ${TCP_AUTH_TIMEOUT:5s}
+    idle-timeout: ${TCP_IDLE_TIMEOUT:5m}
+    max-frame-length: ${TCP_MAX_FRAME_LENGTH:4096}
+
+logging:
+  level:
+    com.tradingplatform: ${LOG_LEVEL:INFO}

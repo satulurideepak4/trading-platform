@@ -1,0 +1,49 @@
+spring:
+  # With the pipeline off there are no positions to persist, so the datasource auto-configuration
+  # is excluded rather than pointed at a real database. Without this, Spring Boot would still try
+  # to open a connection pool against spring.datasource.* at context startup even though nothing in
+  # this profile ever uses it, since bean creation is eager by default.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+
+trading:
+  api-keys: key-one:ACC-1,key-two:ACC-2,key-three:ACC-3,key-four:ACC-4
+  instruments: AAPL:19000,MSFT:42000,NOPRICE:0
+  matching:
+    worker-count: 2
+    queue-capacity: 256
+    command-timeout: 5s
+    # Off: these tests don't exercise recovery and shouldn't leave a journal directory behind as
+    # a side effect. OrderRouterRecoveryTest (matching-engine) and the gateway-level restart test
+    # cover the journal itself.
+    journal-enabled: false
+  risk:
+    max-order-quantity: 1000
+    max-order-notional: 100000000
+    max-open-orders: 500
+    max-position-quantity: 5000
+  # Deliberately generous so that behaviour tests are not throttled; the limiter has its own tests.
+  rate-limit:
+    permits-per-second: 100000
+    burst: 100000
+  # The Stage 3 behaviour tests assert on synchronous outcomes and need no broker.
+  # The Kafka integration tests switch this back on with Testcontainers.
+  pipeline:
+    enabled: false
+  # Off for the same reason: these tests exercise the gateway, not the Stage 6 feed, and a
+  # background simulator thread and WebSocket endpoint would only add unrelated noise.
+  marketdata:
+    enabled: false
+  # Off for the same reason as marketdata above: a real listening socket is unrelated noise for
+  # these tests, and binding a fixed port would risk a conflict across the module's other Spring
+  # contexts. TcpConnectionIntegrationTest turns this back on for itself with its own profile.
+  tcp:
+    enabled: false
+
+logging:
+  level:
+    com.tradingplatform: WARN

@@ -1,0 +1,34 @@
+.idea/
+.vscode/
+.DS_Store
+*.iml
+.env
+.env.local
+.env.*.local
+target/
+**/target/
+*.jfr
+*.hprof
+trading-ui/node_modules/
+trading-ui/dist/
+trading-ui/*.tsbuildinfo
+trading-ui/vite.config.js
+trading-ui/vite.config.d.ts
+
+# Local Claude Code state (project-level settings.json/commands/agents are still tracked)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Runtime data: matching-engine journal, logs, etc. (see MATCHING_JOURNAL_DIR in .env.example)
+data/
+**/data/
+logs/
+**/logs/
+*.log
+
+# Key/cert material - never commit real credentials
+*.pem
+*.key
+*.p12
+*.jks
+*.crt

@@ -1,0 +1,116 @@
+{
+  "id": null,
+  "uid": "trading-matching",
+  "title": "Trading & Matching",
+  "description": "Where is latency increasing? Are queues backing up? Are orders being rejected unusually? Is one symbol/partition overloaded?",
+  "tags": ["trading-platform"],
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {"from": "now-30m", "to": "now"},
+  "timezone": "",
+  "links": [],
+  "annotations": {"list": []},
+  "templating": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Matching latency by operation (p50/p95/p99/p99.9)",
+      "description": "Time a worker spent applying one command, from dequeue to result. GatewayMetrics.recordRouted.",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "trading_matching_latency_seconds{application=\"trading-gateway\",quantile=\"0.5\"}", "legendFormat": "{{operation}} p50", "refId": "A"},
+        {"expr": "trading_matching_latency_seconds{application=\"trading-gateway\",quantile=\"0.95\"}", "legendFormat": "{{operation}} p95", "refId": "B"},
+        {"expr": "trading_matching_latency_seconds{application=\"trading-gateway\",quantile=\"0.99\"}", "legendFormat": "{{operation}} p99", "refId": "C"},
+        {"expr": "trading_matching_latency_seconds{application=\"trading-gateway\",quantile=\"0.999\"}", "legendFormat": "{{operation}} p99.9", "refId": "D"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 5}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Queue wait latency by operation (p50/p95/p99/p99.9)",
+      "description": "Time a command spent waiting in a worker's admission queue before being applied — rising ahead of matching latency itself is the earliest sign a worker is falling behind.",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "trading_matching_queue_wait_seconds{application=\"trading-gateway\",quantile=\"0.5\"}", "legendFormat": "{{operation}} p50", "refId": "A"},
+        {"expr": "trading_matching_queue_wait_seconds{application=\"trading-gateway\",quantile=\"0.95\"}", "legendFormat": "{{operation}} p95", "refId": "B"},
+        {"expr": "trading_matching_queue_wait_seconds{application=\"trading-gateway\",quantile=\"0.99\"}", "legendFormat": "{{operation}} p99", "refId": "C"},
+        {"expr": "trading_matching_queue_wait_seconds{application=\"trading-gateway\",quantile=\"0.999\"}", "legendFormat": "{{operation}} p99.9", "refId": "D"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 5}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Queue depth by worker",
+      "description": "Commands currently waiting per worker. Symbol-to-worker is a fixed hash (OrderRouter.workerIndex), so one worker consistently deeper than the rest means one symbol (or a few sharing it) is overloaded.",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "trading_matching_queue_depth{application=\"trading-gateway\"}", "legendFormat": "worker {{worker}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"decimals": 0, "custom": {"drawStyle": "line", "fillOpacity": 15}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Queue saturation rate by worker",
+      "description": "Commands refused because a worker's queue was full. Any nonzero rate here means real requests were rejected, not just slow — see docs/failure-matrix.md row 10.",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(trading_matching_saturated_total{application=\"trading-gateway\"}[1m])) by (worker)", "legendFormat": "worker {{worker}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "bars", "fillOpacity": 30}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Orders accepted vs. rejected, by operation",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 18},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(trading_orders_accepted_total{application=\"trading-gateway\"}[1m])) by (operation)", "legendFormat": "accepted: {{operation}}", "refId": "A"},
+        {"expr": "sum(rate(trading_orders_rejected_total{application=\"trading-gateway\"}[1m])) by (operation)", "legendFormat": "rejected: {{operation}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "fillOpacity": 10, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Rejection rate by stage and reason",
+      "description": "'stage=risk' never reached the matching engine at all; 'stage=matching' did and was refused there. A rate that is unusually high — or a reason that suddenly dominates — is what this panel is for.",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 18},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(trading_orders_rejected_total{application=\"trading-gateway\"}[5m])) by (stage, reason)", "legendFormat": "{{stage}}: {{reason}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "fillOpacity": 10, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Executions per second, by symbol",
+      "description": "The other half of 'is one symbol overloaded': a hot symbol shows up here as a disproportionate execution rate, not just a deep queue.",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(trading_executions_recorded_total{application=\"trading-gateway\"}[1m])) by (symbol)", "legendFormat": "{{symbol}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "fillOpacity": 15}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    }
+  ]
+}

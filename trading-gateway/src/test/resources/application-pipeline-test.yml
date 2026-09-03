@@ -1,0 +1,59 @@
+trading:
+  api-keys: key-one:ACC-1,key-two:ACC-2,key-three:ACC-3,key-four:ACC-4
+  # OUTAGE is reserved exclusively for KafkaOutageIntegrationTest, which asserts an exact net
+  # position; every other pipeline test shares one JVM and one Postgres/Kafka pair (containers are
+  # started once for the whole run), so a symbol two test classes both trade for real is a shared
+  # mutable position, not two independent ones.
+  # SEEDA/SEEDB/SEEDC are reserved exclusively for SeededWorkloadIntegrationTest. Positions are
+  # already isolated by strategy id, but a resting order left behind on a shared symbol's order
+  # book is not — that test compares the real matching engine's outcome against an independently
+  # computed reference that assumes an empty starting book, so each of its three full-stack runs
+  # needs its own never-before-traded symbol, not just its own strategy id.
+  instruments: AAPL:19000,MSFT:42000,NVDA:12000,TSLA:24000,NOPRICE:0,OUTAGE:15000,SEEDA:12000,SEEDB:12000,SEEDC:12000
+  # Off by default for the whole shared context: these tests assert exact mark prices and
+  # positions for AAPL/MSFT/NVDA/TSLA/OUTAGE against a Postgres/Kafka pair shared across the whole
+  # JVM, and a live simulated feed would race those assertions by writing its own mark prices for
+  # the same symbols. MarketDataIntegrationTest turns this back on for itself alone, scoped to its
+  # own reserved symbol, the same way KafkaOutageIntegrationTest reserves OUTAGE.
+  marketdata:
+    enabled: false
+  # Off for the same reason: a real listening socket is unrelated noise here, and a fixed port
+  # would risk a conflict across this module's other Spring contexts.
+  tcp:
+    enabled: false
+  # Off by default for the whole shared context, the same reasoning as marketdata above: these
+  # tests share one process and don't exercise recovery. MatchingRestartIntegrationTest turns this
+  # back on for itself alone, with its own temp directory.
+  matching:
+    worker-count: 2
+    queue-capacity: 256
+    command-timeout: 5s
+    journal-enabled: false
+  risk:
+    max-order-quantity: 1000
+    max-order-notional: 100000000
+    max-open-orders: 500
+    max-position-quantity: 50000
+  rate-limit:
+    permits-per-second: 100000
+    burst: 100000
+  pipeline:
+    enabled: true
+    publish-queue-capacity: 10000
+    # Few partitions so a test can reason about assignment during a rebalance.
+    topic-partitions: 3
+    topic-replicas: 1
+    audit-log-max-entries: 10000
+    # Short, so a startup replay is declared caught up quickly rather than holding tests open.
+    consumer-idle-interval: 500ms
+    retry:
+      max-attempts: 3
+      initial-interval: 100ms
+      multiplier: 2.0
+      max-interval: 400ms
+
+logging:
+  level:
+    com.tradingplatform: INFO
+    org.apache.kafka: WARN
+    org.springframework.kafka: WARN

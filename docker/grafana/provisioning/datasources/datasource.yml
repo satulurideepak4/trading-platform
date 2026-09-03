@@ -1,0 +1,14 @@
+# Provisioned automatically on container start — no manual "Add data source" click needed to
+# reproduce this stack. See docker-compose.yml's grafana service.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    # Fixed rather than auto-generated, so the dashboard JSON files below can reference
+    # "uid": "prometheus" directly instead of needing a Grafana template variable to resolve it.
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

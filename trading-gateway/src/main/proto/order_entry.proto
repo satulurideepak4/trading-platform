@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+// The HTTP+Protobuf arm of Stage 10's comparison: the same order-entry semantics OrderController's
+// existing JSON endpoints already expose (see OrderResponse/ErrorResponse/SubmitOrderRequest),
+// re-encoded with Protobuf rather than Jackson - same information, different encoding, which is the
+// whole point of this being a fair comparison. See ADR-016 and docs/networking-comparison.md.
+//
+// Field numbers, once assigned, are never reused or renumbered - the same on-disk/on-wire contract
+// discipline this project applies everywhere a schema is hand-maintained (see WireCodes' Javadoc
+// for why that discipline exists at all). New fields always get the next unused number.
+
+package tradingplatform.gateway.protobuf;
+
+option java_package = "com.tradingplatform.gateway.protobuf.generated";
+option java_outer_classname = "OrderEntryProto";
+
+enum SideProto {
+  SIDE_UNSPECIFIED = 0;
+  BUY = 1;
+  SELL = 2;
+}
+
+enum OrderTypeProto {
+  ORDER_TYPE_UNSPECIFIED = 0;
+  LIMIT = 1;
+  MARKET = 2;
+}
+
+enum OrderStatusProto {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  NEW = 1;
+  PARTIALLY_FILLED = 2;
+  FILLED = 3;
+  CANCELLED = 4;
+  REJECTED = 5;
+}
+
+message SubmitOrderProto {
+  string client_order_id = 1;
+  string symbol = 2;
+  SideProto side = 3;
+  OrderTypeProto type = 4;
+  int64 quantity = 5;
+  int64 price = 6;
+  // Empty means "use the account default" - the same convention SubmitOrderRequest uses.
+  string strategy_id = 7;
+}
+
+message ReplaceOrderProto {
+  int64 quantity = 1;
+  int64 price = 2;
+}
+
+message ExecutionProto {
+  int64 execution_id = 1;
+  int64 price = 2;
+  int64 quantity = 3;
+  // "MAKER" or "TAKER", relative to the order this ack/response is about - never the
+  // counterparty's own order id or account, the same scoping OrderResponse.ExecutionResponse
+  // already uses.
+  string liquidity = 4;
+  int64 timestamp_epoch_millis = 5;
+}
+
+message RejectionProto {
+  string source = 1;
+  string reason = 2;
+  string message = 3;
+  string correlation_id = 4;
+}
+
+// One self-contained response type for submit/cancel/replace, unifying accept and reject the same
+// way ServerMessage.Ack does for the TCP path - a client checks `accepted` first; every field below
+// it belongs to exactly one of the two branches and is meaningless (zero/empty, indistinguishable
+// from proto3's own default) on the other.
+message OrderAckProto {
+  int64 order_id = 1;
+  string client_order_id = 2;
+  bool duplicate = 3;
+  bool accepted = 4;
+  // -- accepted only --
+  string symbol = 5;
+  SideProto side = 6;
+  OrderTypeProto type = 7;
+  OrderStatusProto status = 8;
+  int64 quantity = 9;
+  int64 remaining_quantity = 10;
+  int64 executed_quantity = 11;
+  int64 price = 12;
+  int64 created_at_epoch_millis = 13;
+  int64 updated_at_epoch_millis = 14;
+  repeated ExecutionProto executions = 15;
+  // -- rejected only --
+  RejectionProto rejection = 16;
+}

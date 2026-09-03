@@ -1,0 +1,128 @@
+{
+  "id": null,
+  "uid": "trading-kafka-pipeline",
+  "title": "Kafka & Pipeline",
+  "description": "Is Kafka falling behind? Publish latency, consumer lag, dropped/dead-lettered events, and downstream consumer processing latency.",
+  "tags": ["trading-platform"],
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {"from": "now-30m", "to": "now"},
+  "timezone": "",
+  "links": [],
+  "annotations": {"list": []},
+  "templating": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Kafka consumer lag (max records)",
+      "description": "From the Kafka client's own metrics (MicrometerConsumerListener). Rising and not recovering is the direct answer to 'is Kafka falling behind'.",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "kafka_consumer_fetch_manager_records_lag_max{application=\"trading-gateway\"}", "legendFormat": "{{client_id}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"decimals": 0, "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Kafka publish latency (p50/p95/p99/p99.9)",
+      "description": "Time from handing a record to the producer until the broker acked it. BufferedKafkaEventPublisher.",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "trading_events_publish_latency_seconds{application=\"trading-gateway\",quantile=\"0.5\"}", "legendFormat": "p50", "refId": "A"},
+        {"expr": "trading_events_publish_latency_seconds{application=\"trading-gateway\",quantile=\"0.95\"}", "legendFormat": "p95", "refId": "B"},
+        {"expr": "trading_events_publish_latency_seconds{application=\"trading-gateway\",quantile=\"0.99\"}", "legendFormat": "p99", "refId": "C"},
+        {"expr": "trading_events_publish_latency_seconds{application=\"trading-gateway\",quantile=\"0.999\"}", "legendFormat": "p99.9", "refId": "D"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 5}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Events published / dropped / failed",
+      "description": "Dropped means the in-process publish buffer overflowed (broker unreachable long enough) — see docs/failure-matrix.md row 1. Any nonzero drop rate is worth looking at immediately.",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(trading_events_published_total{application=\"trading-gateway\"}[1m]))", "legendFormat": "published", "refId": "A"},
+        {"expr": "sum(rate(trading_events_dropped_total{application=\"trading-gateway\"}[1m]))", "legendFormat": "dropped", "refId": "B"},
+        {"expr": "sum(rate(trading_events_publish_failed_total{application=\"trading-gateway\"}[1m]))", "legendFormat": "failed", "refId": "C"}
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "ops", "custom": {"drawStyle": "line", "fillOpacity": 10}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "dropped"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
+          {"matcher": {"id": "byName", "options": "failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]}
+        ]
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Publish buffer queue depth",
+      "description": "Events waiting to be handed to the Kafka producer. Growing without recovering means the dispatcher can't keep up with the broker.",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "trading_events_queue_depth{application=\"trading-gateway\"}", "legendFormat": "queue depth", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"decimals": 0, "custom": {"drawStyle": "line", "fillOpacity": 15}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Consumer processing latency by consumer group (p50/p95/p99)",
+      "description": "execution-processor, position-processor, audit-processor, risk-state-updater — each an independent consumer group; one falling behind does not hold up the others.",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 18},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "trading_consumer_processing_seconds{application=\"trading-gateway\",quantile=\"0.5\"}", "legendFormat": "{{consumer}} p50", "refId": "A"},
+        {"expr": "trading_consumer_processing_seconds{application=\"trading-gateway\",quantile=\"0.95\"}", "legendFormat": "{{consumer}} p95", "refId": "B"},
+        {"expr": "trading_consumer_processing_seconds{application=\"trading-gateway\",quantile=\"0.99\"}", "legendFormat": "{{consumer}} p99", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 5}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Duplicates / invalid / dead-lettered, by consumer",
+      "description": "Duplicates are expected and informational (redelivery, deduplicated). Invalid and dead-lettered are not — see ADR-009.",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(trading_consumer_duplicates_total{application=\"trading-gateway\"}[5m])) by (consumer)", "legendFormat": "duplicates: {{consumer}}", "refId": "A"},
+        {"expr": "sum(rate(trading_consumer_invalid_total{application=\"trading-gateway\"}[5m])) by (consumer)", "legendFormat": "invalid: {{consumer}}", "refId": "B"},
+        {"expr": "sum(rate(trading_consumer_dead_lettered_total{application=\"trading-gateway\"}[5m]))", "legendFormat": "dead-lettered", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Market-data feed health",
+      "description": "received/sec against duplicate, out-of-order and gap rates from the same feed (ADR-012) — a sanity check on feed quality, not the trading path itself.",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(trading_marketdata_received_total{application=\"trading-gateway\"}[1m]))", "legendFormat": "received", "refId": "A"},
+        {"expr": "sum(rate(trading_marketdata_duplicate_total{application=\"trading-gateway\"}[1m]))", "legendFormat": "duplicate", "refId": "B"},
+        {"expr": "sum(rate(trading_marketdata_out_of_order_total{application=\"trading-gateway\"}[1m]))", "legendFormat": "out-of-order", "refId": "C"},
+        {"expr": "sum(rate(trading_marketdata_gap_total{application=\"trading-gateway\"}[1m]))", "legendFormat": "gap (sequence numbers skipped)", "refId": "D"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+# Alerting-rule examples for the trading platform. Each one fires on a metric this system actually
+# exposes, and each maps to a row in docs/failure-matrix.md's "Operational alert" column — these
+# rules are that table's automated form, not a separate invention. No Alertmanager is wired up in
+# this stack (see docs/observability.md); Prometheus evaluates these and exposes their state on
+# http://localhost:9090/alerts, which is enough to demonstrate the rules without also standing up a
+# notification pipeline nothing here would ever actually page.
+
+groups:
+  - name: trading-platform
+    rules:
+      - alert: GatewayDown
+        expr: up{job="trading-gateway"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Trading gateway is unreachable"
+          description: >-
+            Prometheus has not been able to scrape trading-gateway for 30s. No new orders can be
+            admitted. See docs/disaster-recovery.md's gateway section.
+
+      - alert: HighOrderRejectionRate
+        expr: >-
+          (
+            sum(rate(trading_orders_rejected_total[5m]))
+            /
+            (sum(rate(trading_orders_rejected_total[5m])) + sum(rate(trading_orders_accepted_total[5m])) + 0.001)
+          ) > 0.2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 20% of orders rejected over the last 5 minutes"
+          description: >-
+            Break down by trading_orders_rejected_total{stage,reason} to find which check —
+            pre-trade risk or the matching engine — is refusing most of them, and whether one
+            reason dominates.
+
+      - alert: MatchingQueueSaturating
+        expr: sum(rate(trading_matching_saturated_total[5m])) by (worker) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Matching worker {{ $labels.worker }} is refusing commands — its queue is full"
+          description: >-
+            trading_matching_saturated_total is increasing for worker {{ $labels.worker }}.
+            Cross-check trading_matching_queue_depth for the same worker; a hot single symbol is
+            the most likely cause, since one worker owns a fixed set of symbols. See
+            docs/failure-matrix.md, row 10.
+
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumer_fetch_manager_records_lag_max > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A Kafka consumer is more than 1000 records behind for 5 minutes"
+          description: >-
+            {{ $labels.client_id }} is falling behind its partition. See docs/kafka-design.md for
+            what each consumer group does and how independent they are of one another.
+
+      - alert: KafkaEventsDropped
+        expr: increase(trading_events_dropped_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Events were dropped from the Kafka publish buffer"
+          description: >-
+            trading_events_dropped_total increased — the broker was unreachable long enough to
+            exhaust the in-process publish buffer. See docs/failure-matrix.md, row 1: this is a
+            real, disclosed data-loss possibility, not a transient blip to ignore.
+
+      - alert: EventsPublishFailing
+        expr: increase(trading_events_publish_failed_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "A trading event was dequeued for publish but the broker never acknowledged it"
+          description: >-
+            trading_events_publish_failed_total increased — BufferedKafkaEventPublisher's send()
+            completed exceptionally (a NACK, a timeout, an out-of-sync-replicas rejection) for an
+            event that had already left the in-process buffer. Unlike a full buffer
+            (KafkaEventsDropped) this is not a broker-outage scenario; it can happen with the
+            broker otherwise healthy. There is no retry or dead-letter path for this specific
+            failure today — the event is gone, permanently, the moment this counter increments.
+            This alert exists so that loss is at least never silent; see README's known
+            limitations for the disclosed gap itself.
+
+      - alert: EventsDeadLettered
+        expr: increase(trading_consumer_dead_lettered_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "A record was given up on and sent to a dead-letter topic"
+          description: >-
+            trading_consumer_dead_lettered_total increased. Nothing consumes the DLQ automatically
+            (see docs/kafka-design.md's known limitations) — this alert is what makes that
+            non-consumption operationally visible instead of silent, per the Stage 7 failure
+            matrix's row 12. Check the correlationId/topic/partition/offset the record was logged
+            with at dead-letter time.
+
+      - alert: JvmHeapNearLimit
+        expr: >-
+          (sum(jvm_memory_used_bytes{area="heap"}) / sum(jvm_memory_max_bytes{area="heap"})) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "JVM heap usage above 85% for 5 minutes"
+          description: >-
+            Check jvm_gc_pause_seconds alongside this on the Overview dashboard — a heap this full
+            usually means longer and more frequent GC pauses are close behind, which shows up as
+            matching/gateway latency before the process actually runs out of memory.

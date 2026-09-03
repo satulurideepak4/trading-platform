@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.tradingplatform</groupId>
+        <artifactId>trading-platform</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>trading-gateway</artifactId>
+    <name>Trading Gateway</name>
+
+    <properties>
+        <!-- Spring Boot 3.5.9's own BOM only excludes protobuf-java from a transitive dependency,
+             it does not manage a version for it (checked: no <dependency> entry for it in
+             spring-boot-dependencies-3.5.9.pom) - pinned explicitly here instead of trusting an
+             unverified inherited version, per this stage's own discipline about not guessing. -->
+        <protobuf.version>4.33.1</protobuf.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.tradingplatform</groupId>
+            <artifactId>trading-domain</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.tradingplatform</groupId>
+            <artifactId>matching-engine</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.tradingplatform</groupId>
+            <artifactId>risk-engine</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.tradingplatform</groupId>
+            <artifactId>execution-pipeline</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.tradingplatform</groupId>
+            <artifactId>portfolio-service</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.tradingplatform</groupId>
+            <artifactId>market-data</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!-- The Prometheus wire format for whatever this process's MeterRegistry already
+             collects. Without this, /actuator/metrics exists but nothing is scrapable: Spring
+             Boot falls back to an in-memory-only SimpleMeterRegistry when no registry
+             implementation is on the classpath. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <!-- Stage 10's HTTP+Protobuf comparison path. Spring Boot auto-registers
+             ProtobufHttpMessageConverter once this is on the classpath - see
+             ProtobufConfiguration's Javadoc for the fallback if that ever stops being true. -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>${protobuf.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <extensions>
+            <!-- Resolves ${os.detected.classifier} (e.g. osx-aarch_64) so the protobuf-maven-plugin
+                 below can pick the matching prebuilt protoc binary for whatever machine is building
+                 this module - no protoc install required. -->
+            <extension>
+                <groupId>kr.motd.maven</groupId>
+                <artifactId>os-maven-plugin</artifactId>
+                <version>1.7.1</version>
+            </extension>
+        </extensions>
+        <plugins>
+            <plugin>
+                <groupId>org.xolstice.maven.plugins</groupId>
+                <artifactId>protobuf-maven-plugin</artifactId>
+                <version>0.6.1</version>
+                <configuration>
+                    <!-- Must match protobuf.version above - protoc and protobuf-java drift apart
+                         in what they accept/generate across major versions. -->
+                    <protocArtifact>
+                        com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}
+                    </protocArtifact>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring.boot.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                        <configuration>
+                            <!-- Without a classifier, repackage replaces this module's main
+                                 artifact with the executable fat jar (BOOT-INF/classes,
+                                 BOOT-INF/lib), which is not a normal classpath entry - as of
+                                 Stage 10, the benchmark module depends on this module's plain
+                                 classes (DTOs, generated Protobuf types, the TCP protocol codec)
+                                 as a sibling reactor dependency, and `mvn -am package`/`verify`
+                                 reaches this module's own package phase as a side effect of
+                                 building benchmark. A classifier keeps the main artifact the
+                                 plain jar sibling modules can actually use, and puts the runnable
+                                 jar at trading-gateway-*-exec.jar instead (see the Dockerfile,
+                                 updated to match). -->
+                            <classifier>exec</classifier>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- This module's pipeline tests each bring up their own set of Testcontainers
+                         (Kafka, Postgres) and a full Spring context. Reusing one JVM across test
+                         classes leaves the previous class's context, consumer groups and container
+                         clients alive in the same process while the next class's context starts,
+                         which is resource contention neither class's timeouts were written to
+                         absorb. A fresh fork per class removes the interaction entirely rather than
+                         padding every wait long enough to outrun it. -->
+                    <reuseForks>false</reuseForks>
+                    <forkCount>1</forkCount>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

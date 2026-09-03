@@ -1,0 +1,15 @@
+# Points Grafana at the three dashboard JSON files under docker/grafana/dashboards/ (mounted
+# read-only at /var/lib/grafana/dashboards in the container). Provisioned dashboards are read-only
+# in the UI by design — edits belong in the JSON files here, in version control, not in a click
+# that a container restart would silently discard.
+apiVersion: 1
+
+providers:
+  - name: trading-platform
+    orgId: 1
+    folder: "Trading Platform"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

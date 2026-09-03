@@ -1,0 +1,23 @@
+# Prometheus's own scrape configuration for the local stack (docker-compose.yml).
+#
+# One scrape target: the gateway's own /actuator/prometheus. Everything else this system runs
+# (Kafka, Postgres) is observed indirectly, through the client-side metrics the gateway already
+# publishes (MicrometerProducerListener/MicrometerConsumerListener — see docs/kafka-design.md)
+# rather than by also scraping Kafka's or Postgres's own exporters, which this stack does not run.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alert-rules.yml
+
+scrape_configs:
+  - job_name: trading-gateway
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["trading-gateway:8080"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

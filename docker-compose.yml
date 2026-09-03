@@ -1,0 +1,159 @@
+# Local infrastructure for the trading platform.
+#
+#   docker compose up -d --build
+#
+# Brings up a single-broker Kafka in KRaft mode: no ZooKeeper, one process, fast to start. It is
+# not a production topology — one broker means replication factor 1 and no fault tolerance — but it
+# is the same protocol and the same client configuration.
+#
+# Postgres is the durable store for executions and positions. Flyway migrates it automatically on
+# gateway startup, so there is nothing to run by hand beyond bringing the container up.
+#
+# The gateway is containerised as of Stage 8, alongside Prometheus and Grafana: Prometheus runs in
+# this same Docker network and needs a reachable scrape target, which `localhost:8080` on the host
+# is not from inside a container. Running the gateway from the JVM directly against these services
+# (see the README) still works exactly as before and is faster for iterating on gateway code; this
+# service exists for the observability stack and for exercising the containerised build itself.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: trading-postgres
+    ports:
+      # Overridable because 5432 is a common local conflict (a developer's own Postgres). Set
+      # DB_HOST_PORT in .env and update DB_PORT to match if you change it.
+      - "${DB_HOST_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: trading
+      POSTGRES_USER: trading
+      POSTGRES_PASSWORD: change-me
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading -d trading"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: trading-kafka
+    ports:
+      # 9092 for clients on the host, 29092 for other containers on this network.
+      - "9092:9092"
+    environment:
+      CLUSTER_ID: trading-platform-local-0
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Single broker, so nothing can be replicated. Explicit rather than left at the default of 3,
+      # which would make every internal topic fail to create.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # The application declares its own topics with deliberate partition counts; auto-creation
+      # would silently make single-partition ones on first access instead.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  trading-gateway:
+    build:
+      # Repo root, not this file's directory — see trading-gateway/Dockerfile's own comment.
+      context: .
+      dockerfile: trading-gateway/Dockerfile
+    container_name: trading-gateway
+    ports:
+      - "${TRADING_GATEWAY_PORT:-8080}:8080"
+      # Stage 10's persistent TCP order-entry protocol; see docs/tcp-protocol.md. Host-side default
+      # is 9091, not 9090 - Prometheus already claims 9090 as its own fixed host port below.
+      - "${TRADING_GATEWAY_TCP_PORT:-9091}:9090"
+    environment:
+      GATEWAY_API_KEYS: ${GATEWAY_API_KEYS:-local-dev-key:ACC-DEV,local-dev-key-2:ACC-DEV-2}
+      GATEWAY_INSTRUMENTS: ${GATEWAY_INSTRUMENTS:-AAPL:19000,MSFT:42000,NVDA:12000,TSLA:24000}
+      # Container-network addresses, not the host-facing ones the README's non-Docker path uses.
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: trading
+      DB_PASSWORD: change-me
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # Overrides the JVM-default relative path with the volume mounted below, so the journal
+      # survives `docker compose down` (without -v) the same way Postgres's own data does.
+      MATCHING_JOURNAL_DIR: /data/matching-journal
+    volumes:
+      - gateway-journal:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --spider http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  trading-ui:
+    build:
+      context: .
+      dockerfile: trading-ui/Dockerfile
+    container_name: trading-ui
+    ports:
+      - "${TRADING_UI_PORT:-8081}:80"
+    depends_on:
+      trading-gateway:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: trading-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    depends_on:
+      - trading-gateway
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: trading-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      # Local-only defaults — see docs/observability.md before ever exposing this beyond a
+      # developer machine.
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  kafka-data:
+  postgres-data:
+  gateway-journal:
+  prometheus-data:
+  grafana-data:
